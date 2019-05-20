@@ -170,17 +170,39 @@ def tib(df, column):
     # returns
         idx: list of indices
     '''
-    df['bt'] = get_imbalance(df[column])
-    df['etbt'] = df['bt'].ewm(alpha=0.5).mean()  # for pandas
-    df['tib'] = df['bt'].rolling(1000).mean()
-    df['etib'] = df['etbt'].rolling(1000).mean()
-
-    idx = []
-    for i, x in enumerate(tqdm(df['theta'])):
-        if np.abs(x) >= np.abs(df['etheta'][i]):
+    initial_T = 100
+    len_bars = [initial_T]  # initial value, remove when return
+    t = np.array(df[column])
+    bt = bars.get_imbalance(t)
+    bt_bars = bt[:initial_T]  # initial value, remove when return
+    
+    idx = [0]
+    theta_t = 0
+    recent_bt = []
+    
+    e_t = np.mean(len_bars)
+    e_bt = numpy_ewma_vectorized(bt_bars, len(bt_bars))[-1]
+    
+    for i, b in enumerate(tqdm(bt[initial_T:])):
+        theta_t += b
+        recent_bt.append(b)
+        if np.sum(theta_t) >= e_t*e_bt:
+            if len_bars[0]==initial_T:  # 초기값 제거, 교체
+                len_bars = [i-idx[-1]+1]
+                bt_bars = recent_bt
+            else:
+                len_bars.append(i-idx[-1]+1)
+                bt_bars.extend(recent_bt)  # 이전바의 모든 bt값을 넣을까, 바별로 하나의 대표값을 넣을까?
+            if len(len_bars)==1:
+                e_t = np.mean(len_bars)
+            else:
+                e_t = bars.numpy_ewma_vectorized(np.array(len_bars), len(len_bars))[-1]
+            e_bt = bars.numpy_ewma_vectorized(np.array(bt_bars), len(bt_bars))[-1]
             idx.append(i)
+            theta_t = 0
+            recent_bt = []
             continue
-    return idx
+    return idx[1:]
 
 
 def tib_df(df, column):
@@ -199,50 +221,45 @@ def vib(df, price_column, volume_column):
     # returns
         idx: list of indices
     '''
-    if 'bt' not in df.columns:
-        df['bt'] = get_imbalance(df[price_column])
-    df['evbt'] = (df['bt']*df[volume_column]).ewm(alpha=0.5).mean()  # for pandas
-    df['vib'] = (df['bt']*df[volume_column]).rolling(1000).mean()
-    df['evib'] = df['evbt'].rolling(1000).mean()
-
-    idx = []
-    for i, x in enumerate(tqdm(df['vib'])):
-        if np.abs(x) >= np.abs(df['evib'][i]):
+    initial_T = 100
+    len_bars = [initial_T]  # initial value, remove when return
+    t = np.array(df[price_column])
+    vs = np.array(df[volume_column])
+    bt = bars.get_imbalance(t)
+    vbt_bars = vs[1:initial_T]*bt[1:initial_T]  # initial value, remove when return, remove first volume
+    
+    idx = [0]
+    theta_t = 0
+    recent_vbt = []
+    
+    e_t = np.mean(len_bars)
+    e_vbt = numpy_ewma_vectorized(vbt_bars, len(vbt_bars))[-1]
+    
+    print(e_t, e_vbt)
+    
+    for i, b in enumerate(tqdm(bt[initial_T:])):
+        v = vs[i]
+        theta_t += b*v
+        recent_vbt.append(b*v)
+        if np.sum(theta_t) >= e_t*e_vbt:
+            if len_bars[0]==initial_T:  # 초기값 제거, 교체
+                len_bars = [i-idx[-1]+1]
+                vbt_bars = recent_vbt
+            else:
+                len_bars.append(i-idx[-1]+1)
+                vbt_bars.extend(recent_vbt)  # 이전바의 모든 bt값을 넣을까, 바별로 하나의 대표값을 넣을까?
+            if len(len_bars)==1:
+                e_t = np.mean(len_bars)
+            else:
+                e_t = bars.numpy_ewma_vectorized(np.array(len_bars), len(len_bars))[-1]
+            e_vbt = bars.numpy_ewma_vectorized(np.array(vbt_bars), len(vbt_bars))[-1]
             idx.append(i)
+            theta_t = 0
+            recent_vbt = []
             continue
-    return idx
+    return idx[1:]
 
 
 def vib_df(df, price_column, volume_column):
     idx = vib(df, price_column, volume_column)
-    return df.iloc[idx]
-
-
-def dib(df, price_column, amount_column):
-    '''
-    compute dollar imbalance bars
-
-    # args
-        df: pd.DataFrame()
-        price_column: name for price data
-        amount_column: name for amount data
-    # returns
-        idx: list of indices
-    '''
-    if 'bt' not in df.columns:
-        df['bt'] = get_imbalance(df[price_column])
-    df['edbt'] = (df['bt']*df[amount_column]).ewm(alpha=0.5).mean()  # for pandas
-    df['dib'] = (df['bt']*df[amount_column]).rolling(1000).mean()
-    df['edib'] = df['edbt'].rolling(1000).mean()
-
-    idx = []
-    for i, x in enumerate(tqdm(df['vib'])):
-        if np.abs(x) >= np.abs(df['evib'][i]):
-            idx.append(i)
-            continue
-    return idx
-
-
-def dib_df(df, price_column, amount_column):
-    idx = dib(df, price_column, amount_column)
     return df.iloc[idx]

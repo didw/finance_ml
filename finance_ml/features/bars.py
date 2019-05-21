@@ -124,7 +124,8 @@ def get_imbalance(t):
 
 
 def numpy_ewma_vectorized(data, window):
-
+    if len(data) == 0:
+        return data[0]
     alpha = 2 /(window + 1.0)
     alpha_rev = 1-alpha
 
@@ -160,7 +161,7 @@ def numpy_ewma_vectorized_v2(data, window):
     return out
 
 
-def tib(df, column):
+def tib(df, column, exp_num_ticks_init=100, num_prev_bars=1000):
     '''
     compute tick imbalance bars
 
@@ -170,49 +171,45 @@ def tib(df, column):
     # returns
         idx: list of indices
     '''
-    initial_T = 100
-    len_bars = [initial_T]  # initial value, remove when return
+    num_ticks_bar = []  # initial value, remove when return
     t = np.array(df[column])
-    bt = bars.get_imbalance(t)
-    bt_bars = bt[:initial_T]  # initial value, remove when return
+    imbalance_array = get_imbalance(t)
     
     idx = [0]
-    theta_t = 0
-    recent_bt = []
+    cum_theta = 0
     
-    e_t = np.mean(len_bars)
-    e_bt = numpy_ewma_vectorized(bt_bars, len(bt_bars))[-1]
-    
-    for i, b in enumerate(tqdm(bt[initial_T:])):
-        theta_t += b
-        recent_bt.append(b)
-        if np.sum(theta_t) >= e_t*e_bt:
-            if len_bars[0]==initial_T:  # 초기값 제거, 교체
-                len_bars = [i-idx[-1]+1]
-                bt_bars = recent_bt
-            else:
-                len_bars.append(i-idx[-1]+1)
-                bt_bars.extend(recent_bt)  # 이전바의 모든 bt값을 넣을까, 바별로 하나의 대표값을 넣을까?
-            if len(len_bars)==1:
-                e_t = np.mean(len_bars)
-            else:
-                e_t = bars.numpy_ewma_vectorized(np.array(len_bars), len(len_bars))[-1]
-            e_bt = bars.numpy_ewma_vectorized(np.array(bt_bars), len(bt_bars))[-1]
+    exp_num_ticks = exp_num_ticks_init
+    expected_imbalance = np.nan
+
+    for i, b in enumerate(tqdm(imbalance_array)):
+        cum_theta += b
+        
+        if np.isnan(expected_imbalance) and i > exp_num_ticks_init:
+            expected_imbalance = numpy_ewma_vectorized(np.array(
+                imbalance_array[:i]), 
+                min(i, exp_num_ticks))[-1]
+
+        if np.abs(cum_theta) >= exp_num_ticks * np.abs(expected_imbalance):
+            num_ticks_bar.append(i-idx[-1]+1)
+            exp_num_ticks = numpy_ewma_vectorized(np.array(
+                num_ticks_bar[-num_prev_bars:]), num_prev_bars)[-1]
+            expected_imbalance = numpy_ewma_vectorized(np.array(
+                imbalance_array[:i]), 
+                min(i, exp_num_ticks*num_prev_bars))[-1]
             idx.append(i)
-            theta_t = 0
-            recent_bt = []
+            cum_theta = 0
             continue
     return idx[1:]
 
 
-def tib_df(df, column):
-    idx = tib(df, column)
+def tib_df(df, column, exp_num_ticks_init=100, num_prev_bars=1000):
+    idx = tib(df, column, exp_num_ticks_init, num_prev_bars)
     return df.iloc[idx]
 
 
-def vib(df, price_column, volume_column):
+def vib(df, price_column, volume_column, exp_num_ticks_init=100, num_prev_bars=1000):
     '''
-    compute volume imbalance bars
+    compute tick imbalance bars
 
     # args
         df: pd.DataFrame()
@@ -221,45 +218,41 @@ def vib(df, price_column, volume_column):
     # returns
         idx: list of indices
     '''
-    initial_T = 100
-    len_bars = [initial_T]  # initial value, remove when return
+    num_ticks_bar = []  # initial value, remove when return
     t = np.array(df[price_column])
-    vs = np.array(df[volume_column])
-    bt = bars.get_imbalance(t)
-    vbt_bars = vs[1:initial_T]*bt[1:initial_T]  # initial value, remove when return, remove first volume
+    volume = np.array(df[volume_column])
+    imbalance_array = get_imbalance(t)
     
     idx = [0]
-    theta_t = 0
-    recent_vbt = []
+    cum_theta = 0
     
-    e_t = np.mean(len_bars)
-    e_vbt = numpy_ewma_vectorized(vbt_bars, len(vbt_bars))[-1]
-    
-    print(e_t, e_vbt)
-    
-    for i, b in enumerate(tqdm(bt[initial_T:])):
-        v = vs[i]
-        theta_t += b*v
-        recent_vbt.append(b*v)
-        if np.sum(theta_t) >= e_t*e_vbt:
-            if len_bars[0]==initial_T:  # 초기값 제거, 교체
-                len_bars = [i-idx[-1]+1]
-                vbt_bars = recent_vbt
-            else:
-                len_bars.append(i-idx[-1]+1)
-                vbt_bars.extend(recent_vbt)  # 이전바의 모든 bt값을 넣을까, 바별로 하나의 대표값을 넣을까?
-            if len(len_bars)==1:
-                e_t = np.mean(len_bars)
-            else:
-                e_t = bars.numpy_ewma_vectorized(np.array(len_bars), len(len_bars))[-1]
-            e_vbt = bars.numpy_ewma_vectorized(np.array(vbt_bars), len(vbt_bars))[-1]
+    exp_num_ticks = exp_num_ticks_init
+    expected_imbalance = np.nan
+
+    for i, b in enumerate(tqdm(imbalance_array)):
+        if i == 0:
+            continue
+        v = volume[i]
+        cum_theta += b*v
+        
+        if np.isnan(expected_imbalance) and i > exp_num_ticks_init:
+            expected_imbalance = numpy_ewma_vectorized(np.array(
+                imbalance_array[1:i]*volume[1:i]), 
+                min(i, exp_num_ticks))[-1]
+
+        if np.abs(cum_theta) >= exp_num_ticks * np.abs(expected_imbalance):
+            num_ticks_bar.append(i-idx[-1]+1)
+            exp_num_ticks = numpy_ewma_vectorized(np.array(
+                num_ticks_bar[-num_prev_bars:]), num_prev_bars)[-1]
+            expected_imbalance = numpy_ewma_vectorized(np.array(
+                imbalance_array[1:i]*volume[1:i]), 
+                min(i, exp_num_ticks*num_prev_bars))[-1]
             idx.append(i)
-            theta_t = 0
-            recent_vbt = []
+            cum_theta = 0
             continue
     return idx[1:]
 
 
-def vib_df(df, price_column, volume_column):
-    idx = vib(df, price_column, volume_column)
+def vib_df(df, price_column, volume_column, exp_num_ticks_init=100, num_prev_bars=1000):
+    idx = vib(df, price_column, volume_column, exp_num_ticks_init, num_prev_bars)
     return df.iloc[idx]
